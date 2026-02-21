@@ -168,3 +168,70 @@ class TestProductModel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProductModelExtraCoverage(unittest.TestCase):
+    """Tests adicionales para cobertura de models.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        from service.routes import app
+        from service.models import db
+        app.config["TESTING"] = True
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        if not app.extensions.get("sqlalchemy"):
+            db.init_app(app)
+        with app.app_context():
+            db.create_all()
+        cls.app = app
+        cls.db = db
+
+    @classmethod
+    def tearDownClass(cls):
+        with cls.app.app_context():
+            cls.db.drop_all()
+
+    def setUp(self):
+        from service.models import Product
+        with self.app.app_context():
+            self.db.session.query(Product).delete()
+            self.db.session.commit()
+
+    def tearDown(self):
+        with self.app.app_context():
+            self.db.session.remove()
+
+    def test_repr(self):
+        """It should return a string representation"""
+        from tests.factories import ProductFactory
+        product = ProductFactory()
+        with self.app.app_context():
+            product.id = None
+            product.create()
+            self.assertIn(product.name, repr(product))
+
+    def test_find_by_price_as_string(self):
+        """It should find products when price is passed as string"""
+        from tests.factories import ProductFactory
+        from service.models import Product
+        from decimal import Decimal
+        with self.app.app_context():
+            product = ProductFactory()
+            product.price = Decimal("19.99")
+            product.create()
+            found = Product.find_by_price("19.99")
+            self.assertEqual(found.count(), 1)
+
+    def test_deserialize_bad_attribute(self):
+        """It should raise DataValidationError for bad category attribute"""
+        from service.models import Product, DataValidationError
+        product = Product()
+        bad_data = {
+            "name": "Test",
+            "description": "Test",
+            "price": "9.99",
+            "available": True,
+            "category": "NONEXISTENT_CATEGORY"
+        }
+        self.assertRaises(DataValidationError, product.deserialize, bad_data)

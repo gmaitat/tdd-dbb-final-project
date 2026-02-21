@@ -229,3 +229,51 @@ class TestProductRoutes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProductRoutesExtraCoverage(unittest.TestCase):
+    """Tests adicionales para aumentar cobertura"""
+
+    @classmethod
+    def setUpClass(cls):
+        from service.models import db
+        from service.routes import app
+        app.config["TESTING"] = True
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        if not app.extensions.get("sqlalchemy"):
+            db.init_app(app)
+        with app.app_context():
+            db.create_all()
+        cls.app = app
+        cls.db = db
+        cls.client = app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        with cls.app.app_context():
+            cls.db.drop_all()
+
+    def setUp(self):
+        from service.models import Product
+        with self.app.app_context():
+            self.db.session.query(Product).delete()
+            self.db.session.commit()
+
+    def tearDown(self):
+        with self.app.app_context():
+            self.db.session.remove()
+
+    def test_query_by_invalid_category(self):
+        """It should return 400 for invalid category"""
+        resp = self.client.get("/products?category=INVALID_CATEGORY")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_create_product_wrong_content_type(self):
+        """It should return 415 for wrong Content-Type"""
+        resp = self.client.post(
+            "/products",
+            data="some data",
+            content_type="text/plain",
+        )
+        self.assertEqual(resp.status_code, 415)
