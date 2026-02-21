@@ -4,8 +4,6 @@ Test Cases for Product REST API Routes
 import unittest
 import logging
 from urllib.parse import quote_plus
-from service.models import Product, Category, db
-from tests.factories import ProductFactory
 
 DATABASE_URI = "sqlite:///:memory:"
 BASE_URL = "/products"
@@ -21,6 +19,7 @@ HTTP_415_UNSUPPORTED_MEDIA_TYPE = 415
 
 def _create_products(client, count):
     """Helper: crea productos via POST"""
+    from tests.factories import ProductFactory
     products = []
     for _ in range(count):
         product = ProductFactory()
@@ -39,42 +38,41 @@ class TestProductRoutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Runs once before all tests"""
-        from flask import Flask
-        from flask_sqlalchemy import SQLAlchemy
+        """Configura la app de Flask con BD en memoria ANTES de cualquier import de routes"""
+        # 1. Primero configurar la app con BD de prueba
+        from service.models import db
+        from service.routes import app
 
-        # Crear app fresca solo para tests
-        cls.app = Flask(__name__)
-        cls.app.config["TESTING"] = True
-        cls.app.config["DEBUG"] = False
-        cls.app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
-        cls.app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        app.config["TESTING"] = True
+        app.config["DEBUG"] = False
+        app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
+        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-        # Registrar db y modelo
-        db.init_app(cls.app)
-        with cls.app.app_context():
+        # 2. Inicializar db solo si no está ya inicializada
+        if not app.extensions.get("sqlalchemy"):
+            db.init_app(app)
+
+        with app.app_context():
             db.create_all()
 
-        # Registrar rutas
-        from service import routes as r
-        # Reusar el app de routes pero reconfigurar
-        r.app.config["TESTING"] = True
-        r.app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
-        r.app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-        Product.init_db(r.app)
-        cls.client = r.app.test_client()
+        cls.app = app
+        cls.db = db
+        cls.client = app.test_client()
 
     @classmethod
     def tearDownClass(cls):
-        db.session.close()
+        with cls.app.app_context():
+            cls.db.drop_all()
 
     def setUp(self):
-        db.session.query(Product).delete()
-        db.session.commit()
+        from service.models import Product
+        with self.app.app_context():
+            self.db.session.query(Product).delete()
+            self.db.session.commit()
 
     def tearDown(self):
-        db.session.remove()
+        with self.app.app_context():
+            self.db.session.remove()
 
     # ------------------------------------------------------------------ #
     # Health check
@@ -122,6 +120,7 @@ class TestProductRoutes(unittest.TestCase):
 
     def test_update_product_not_found(self):
         """It should return 404 when updating a non-existent Product"""
+        from tests.factories import ProductFactory
         product = ProductFactory()
         resp = self.client.put(
             f"{BASE_URL}/0",
@@ -191,7 +190,9 @@ class TestProductRoutes(unittest.TestCase):
         products = _create_products(self.client, 10)
         test_available = products[0]["available"]
         count = len([p for p in products if p["available"] == test_available])
-        resp = self.client.get(f"{BASE_URL}?available={str(test_available).lower()}")
+        resp = self.client.get(
+            f"{BASE_URL}?available={str(test_available).lower()}"
+        )
         self.assertEqual(resp.status_code, HTTP_200_OK)
         data = resp.get_json()
         self.assertEqual(len(data), count)
@@ -203,6 +204,7 @@ class TestProductRoutes(unittest.TestCase):
     # ------------------------------------------------------------------ #
     def test_create_product(self):
         """It should Create a new Product"""
+        from tests.factories import ProductFactory
         product = ProductFactory()
         resp = self.client.post(
             BASE_URL,
