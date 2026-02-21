@@ -3,6 +3,7 @@ Test Cases for Product Model
 """
 import unittest
 import logging
+from decimal import Decimal
 from service.routes import app
 from service.models import Product, Category, DataValidationError, db
 from tests.factories import ProductFactory
@@ -19,22 +20,26 @@ class TestProductModel(unittest.TestCase):
         app.config["TESTING"] = True
         app.config["DEBUG"] = False
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
-        Product.init_db(app)
+        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        if not app.extensions.get("sqlalchemy"):
+            db.init_app(app)
+        with app.app_context():
+            db.create_all()
 
     @classmethod
     def tearDownClass(cls):
-        db.session.close()
+        with app.app_context():
+            db.session.close()
 
     def setUp(self):
-        db.session.query(Product).delete()
-        db.session.commit()
+        with app.app_context():
+            db.session.query(Product).delete()
+            db.session.commit()
 
     def tearDown(self):
-        db.session.remove()
+        with app.app_context():
+            db.session.remove()
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Leer un Producto
-    # ------------------------------------------------------------------ #
     def test_read_a_product(self):
         """It should Read a Product"""
         product = ProductFactory()
@@ -50,16 +55,11 @@ class TestProductModel(unittest.TestCase):
         self.assertEqual(found.available, product.available)
         self.assertEqual(found.category, product.category)
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Actualizar un Producto
-    # ------------------------------------------------------------------ #
     def test_update_a_product(self):
         """It should Update a Product"""
         product = ProductFactory()
-        logger.debug("Testing product: %s", product)
         product.id = None
         product.create()
-        logger.debug("Product created: %s", product)
         original_id = product.id
         product.description = "Updated description for testing"
         product.update()
@@ -70,9 +70,6 @@ class TestProductModel(unittest.TestCase):
         self.assertEqual(products[0].id, original_id)
         self.assertEqual(products[0].description, "Updated description for testing")
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Eliminar un Producto
-    # ------------------------------------------------------------------ #
     def test_delete_a_product(self):
         """It should Delete a Product"""
         product = ProductFactory()
@@ -81,9 +78,6 @@ class TestProductModel(unittest.TestCase):
         product.delete()
         self.assertEqual(len(Product.all()), 0)
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Listar Todos los Productos
-    # ------------------------------------------------------------------ #
     def test_list_all_products(self):
         """It should List all Products in the database"""
         products = Product.all()
@@ -94,9 +88,6 @@ class TestProductModel(unittest.TestCase):
         products = Product.all()
         self.assertEqual(len(products), 5)
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Buscar por Nombre
-    # ------------------------------------------------------------------ #
     def test_find_by_name(self):
         """It should Find Products by Name"""
         products = ProductFactory.create_batch(5)
@@ -109,9 +100,6 @@ class TestProductModel(unittest.TestCase):
         for product in found:
             self.assertEqual(product.name, name)
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Buscar por Disponibilidad
-    # ------------------------------------------------------------------ #
     def test_find_by_availability(self):
         """It should Find Products by Availability"""
         products = ProductFactory.create_batch(10)
@@ -124,9 +112,6 @@ class TestProductModel(unittest.TestCase):
         for product in found:
             self.assertEqual(product.available, available)
 
-    # ------------------------------------------------------------------ #
-    # Caso de Prueba: Buscar por Categoría
-    # ------------------------------------------------------------------ #
     def test_find_by_category(self):
         """It should Find Products by Category"""
         products = ProductFactory.create_batch(10)
@@ -139,9 +124,6 @@ class TestProductModel(unittest.TestCase):
         for product in found:
             self.assertEqual(product.category, category)
 
-    # ------------------------------------------------------------------ #
-    # Tests adicionales de robustez
-    # ------------------------------------------------------------------ #
     def test_deserialize_missing_data(self):
         """It should raise DataValidationError if data is missing"""
         product = Product()
@@ -165,67 +147,23 @@ class TestProductModel(unittest.TestCase):
         product.id = None
         self.assertRaises(DataValidationError, product.update)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TestProductModelExtraCoverage(unittest.TestCase):
-    """Tests adicionales para cobertura de models.py"""
-
-    @classmethod
-    def setUpClass(cls):
-        from service.routes import app
-        from service.models import db
-        app.config["TESTING"] = True
-        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
-        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-        if not app.extensions.get("sqlalchemy"):
-            db.init_app(app)
-        with app.app_context():
-            db.create_all()
-        cls.app = app
-        cls.db = db
-
-    @classmethod
-    def tearDownClass(cls):
-        with cls.app.app_context():
-            cls.db.drop_all()
-
-    def setUp(self):
-        from service.models import Product
-        with self.app.app_context():
-            self.db.session.query(Product).delete()
-            self.db.session.commit()
-
-    def tearDown(self):
-        with self.app.app_context():
-            self.db.session.remove()
-
     def test_repr(self):
         """It should return a string representation"""
-        from tests.factories import ProductFactory
         product = ProductFactory()
-        with self.app.app_context():
-            product.id = None
-            product.create()
-            self.assertIn(product.name, repr(product))
+        product.id = None
+        product.create()
+        self.assertIn(product.name, repr(product))
 
     def test_find_by_price_as_string(self):
         """It should find products when price is passed as string"""
-        from tests.factories import ProductFactory
-        from service.models import Product
-        from decimal import Decimal
-        with self.app.app_context():
-            product = ProductFactory()
-            product.price = Decimal("19.99")
-            product.create()
-            found = Product.find_by_price("19.99")
-            self.assertEqual(found.count(), 1)
+        product = ProductFactory()
+        product.price = Decimal("19.99")
+        product.create()
+        found = Product.find_by_price("19.99")
+        self.assertEqual(found.count(), 1)
 
     def test_deserialize_bad_attribute(self):
-        """It should raise DataValidationError for bad category attribute"""
-        from service.models import Product, DataValidationError
+        """It should raise DataValidationError for bad category"""
         product = Product()
         bad_data = {
             "name": "Test",
@@ -235,3 +173,7 @@ class TestProductModelExtraCoverage(unittest.TestCase):
             "category": "NONEXISTENT_CATEGORY"
         }
         self.assertRaises(DataValidationError, product.deserialize, bad_data)
+
+
+if __name__ == "__main__":
+    unittest.main()

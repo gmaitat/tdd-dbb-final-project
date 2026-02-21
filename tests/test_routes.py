@@ -4,6 +4,9 @@ Test Cases for Product REST API Routes
 import unittest
 import logging
 from urllib.parse import quote_plus
+from service.routes import app
+from service.models import Product, Category, db
+from tests.factories import ProductFactory
 
 DATABASE_URI = "sqlite:///:memory:"
 BASE_URL = "/products"
@@ -19,7 +22,6 @@ HTTP_415_UNSUPPORTED_MEDIA_TYPE = 415
 
 def _create_products(client, count):
     """Helper: crea productos via POST"""
-    from tests.factories import ProductFactory
     products = []
     for _ in range(count):
         product = ProductFactory()
@@ -38,53 +40,35 @@ class TestProductRoutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Configura la app de Flask con BD en memoria ANTES de cualquier import de routes"""
-        # 1. Primero configurar la app con BD de prueba
-        from service.models import db
-        from service.routes import app
-
         app.config["TESTING"] = True
         app.config["DEBUG"] = False
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-        # 2. Inicializar db solo si no está ya inicializada
         if not app.extensions.get("sqlalchemy"):
             db.init_app(app)
-
         with app.app_context():
             db.create_all()
-
-        cls.app = app
-        cls.db = db
         cls.client = app.test_client()
 
     @classmethod
     def tearDownClass(cls):
-        with cls.app.app_context():
-            cls.db.drop_all()
+        with app.app_context():
+            db.session.close()
 
     def setUp(self):
-        from service.models import Product
-        with self.app.app_context():
-            self.db.session.query(Product).delete()
-            self.db.session.commit()
+        with app.app_context():
+            db.session.query(Product).delete()
+            db.session.commit()
 
     def tearDown(self):
-        with self.app.app_context():
-            self.db.session.remove()
+        with app.app_context():
+            db.session.remove()
 
-    # ------------------------------------------------------------------ #
-    # Health check
-    # ------------------------------------------------------------------ #
     def test_health(self):
         """It should return health status OK"""
         resp = self.client.get("/health")
         self.assertEqual(resp.status_code, HTTP_200_OK)
 
-    # ------------------------------------------------------------------ #
-    # Leer un Producto
-    # ------------------------------------------------------------------ #
     def test_get_product(self):
         """It should Read a single Product"""
         test_product = _create_products(self.client, 1)[0]
@@ -102,9 +86,6 @@ class TestProductRoutes(unittest.TestCase):
         resp = self.client.get(f"{BASE_URL}/0")
         self.assertEqual(resp.status_code, HTTP_404_NOT_FOUND)
 
-    # ------------------------------------------------------------------ #
-    # Actualizar un Producto
-    # ------------------------------------------------------------------ #
     def test_update_product(self):
         """It should Update an existing Product"""
         test_product = _create_products(self.client, 1)[0]
@@ -120,7 +101,6 @@ class TestProductRoutes(unittest.TestCase):
 
     def test_update_product_not_found(self):
         """It should return 404 when updating a non-existent Product"""
-        from tests.factories import ProductFactory
         product = ProductFactory()
         resp = self.client.put(
             f"{BASE_URL}/0",
@@ -129,9 +109,6 @@ class TestProductRoutes(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, HTTP_404_NOT_FOUND)
 
-    # ------------------------------------------------------------------ #
-    # Eliminar un Producto
-    # ------------------------------------------------------------------ #
     def test_delete_product(self):
         """It should Delete a Product"""
         products = _create_products(self.client, 5)
@@ -141,9 +118,6 @@ class TestProductRoutes(unittest.TestCase):
         resp = self.client.get(f"{BASE_URL}/{test_product['id']}")
         self.assertEqual(resp.status_code, HTTP_404_NOT_FOUND)
 
-    # ------------------------------------------------------------------ #
-    # Listar todos
-    # ------------------------------------------------------------------ #
     def test_get_all_products(self):
         """It should List all Products"""
         _create_products(self.client, 5)
@@ -152,9 +126,6 @@ class TestProductRoutes(unittest.TestCase):
         data = resp.get_json()
         self.assertEqual(len(data), 5)
 
-    # ------------------------------------------------------------------ #
-    # Filtrar por Nombre
-    # ------------------------------------------------------------------ #
     def test_query_by_name(self):
         """It should List Products filtered by name"""
         products = _create_products(self.client, 5)
@@ -167,9 +138,6 @@ class TestProductRoutes(unittest.TestCase):
         for p in data:
             self.assertEqual(p["name"], test_name)
 
-    # ------------------------------------------------------------------ #
-    # Filtrar por Categoría
-    # ------------------------------------------------------------------ #
     def test_query_by_category(self):
         """It should List Products filtered by category"""
         products = _create_products(self.client, 10)
@@ -182,9 +150,6 @@ class TestProductRoutes(unittest.TestCase):
         for p in data:
             self.assertEqual(p["category"], test_category)
 
-    # ------------------------------------------------------------------ #
-    # Filtrar por Disponibilidad
-    # ------------------------------------------------------------------ #
     def test_query_by_availability(self):
         """It should List Products filtered by availability"""
         products = _create_products(self.client, 10)
@@ -199,12 +164,8 @@ class TestProductRoutes(unittest.TestCase):
         for p in data:
             self.assertEqual(p["available"], test_available)
 
-    # ------------------------------------------------------------------ #
-    # Crear Producto
-    # ------------------------------------------------------------------ #
     def test_create_product(self):
         """It should Create a new Product"""
-        from tests.factories import ProductFactory
         product = ProductFactory()
         resp = self.client.post(
             BASE_URL,
@@ -221,59 +182,23 @@ class TestProductRoutes(unittest.TestCase):
         resp = self.client.post(BASE_URL, data="bad data")
         self.assertEqual(resp.status_code, HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
+    def test_create_product_wrong_content_type(self):
+        """It should return 415 for wrong Content-Type"""
+        resp = self.client.post(
+            BASE_URL, data="data", content_type="text/plain"
+        )
+        self.assertEqual(resp.status_code, HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
     def test_method_not_allowed(self):
         """It should return 405 for invalid methods"""
         resp = self.client.delete(BASE_URL)
         self.assertEqual(resp.status_code, HTTP_405_METHOD_NOT_ALLOWED)
 
+    def test_query_by_invalid_category(self):
+        """It should return 400 for invalid category"""
+        resp = self.client.get(f"{BASE_URL}?category=INVALID_CATEGORY")
+        self.assertEqual(resp.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class TestProductRoutesExtraCoverage(unittest.TestCase):
-    """Tests adicionales para aumentar cobertura"""
-
-    @classmethod
-    def setUpClass(cls):
-        from service.models import db
-        from service.routes import app
-        app.config["TESTING"] = True
-        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
-        app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-        if not app.extensions.get("sqlalchemy"):
-            db.init_app(app)
-        with app.app_context():
-            db.create_all()
-        cls.app = app
-        cls.db = db
-        cls.client = app.test_client()
-
-    @classmethod
-    def tearDownClass(cls):
-        with cls.app.app_context():
-            cls.db.drop_all()
-
-    def setUp(self):
-        from service.models import Product
-        with self.app.app_context():
-            self.db.session.query(Product).delete()
-            self.db.session.commit()
-
-    def tearDown(self):
-        with self.app.app_context():
-            self.db.session.remove()
-
-    def test_query_by_invalid_category(self):
-        """It should return 400 for invalid category"""
-        resp = self.client.get("/products?category=INVALID_CATEGORY")
-        self.assertEqual(resp.status_code, 400)
-
-    def test_create_product_wrong_content_type(self):
-        """It should return 415 for wrong Content-Type"""
-        resp = self.client.post(
-            "/products",
-            data="some data",
-            content_type="text/plain",
-        )
-        self.assertEqual(resp.status_code, 415)
