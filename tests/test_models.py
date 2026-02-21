@@ -32,13 +32,14 @@ class TestProductModel(unittest.TestCase):
             db.session.close()
 
     def setUp(self):
-        with app.app_context():
-            db.session.query(Product).delete()
-            db.session.commit()
+        self.ctx = app.app_context()
+        self.ctx.push()
+        db.session.query(Product).delete()
+        db.session.commit()
 
     def tearDown(self):
-        with app.app_context():
-            db.session.remove()
+        db.session.remove()
+        self.ctx.pop()
 
     def test_read_a_product(self):
         """It should Read a Product"""
@@ -173,6 +174,24 @@ class TestProductModel(unittest.TestCase):
             "category": "NONEXISTENT_CATEGORY"
         }
         self.assertRaises(DataValidationError, product.deserialize, bad_data)
+    
+    def test_init_db(self):
+        """It should initialize the database"""
+        from service.models import init_db
+        from flask import Flask
+        test_app = Flask(__name__)
+        test_app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+        test_app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+        init_db(test_app)  # should not raise
+
+    def test_deserialize_type_error(self):
+        """It should raise DataValidationError on TypeError"""
+        product = Product()
+        self.assertRaises(
+            DataValidationError,
+            product.deserialize,
+            None  # None causa TypeError
+        )
 
 
 if __name__ == "__main__":
